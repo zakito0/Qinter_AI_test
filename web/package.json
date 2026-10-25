@@ -1,0 +1,12 @@
+{
+  "name": "qinter-web",
+  "version": "1.0.0",
+  "description": "Qinter Web Lite - Real-Time Live Speech Translation Room",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

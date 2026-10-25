@@ -1,0 +1,32 @@
+# Environment & Secrets (Never commit credentials)
+.env
+*.env
+*.pem
+*.key
+cert/
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.sqlite3
+users.db
+.venv/
+venv/
+
+# Android / Mobile (Keep test repo strictly Web Lite)
+*.apk
+*.aab
+build/
+.gradle/
+*.iml
+local.properties
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

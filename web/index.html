@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Qinter Lite — Speech Translation (Browser Edition)</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div id="phone-frame">
+    
+    <!-- Browser Lite Version Notice Banner -->
+    <div class="lite-header-banner">
+      <span>🌐 <strong>Qinter Lite</strong> • Web Speech Edition</span>
+      <span style="font-size: 11px; color: var(--gold-400); opacity: 0.8;">📱 Mobile App Coming Soon</span>
+    </div>
+
+    <!-- iOS / Safari Audio Activation Banner -->
+    <div id="ios-audio-banner" class="ios-audio-prompt" onclick="unlockAudioEngine()">
+      <span>🔊 Tap to enable live speech audio on iOS / Safari</span>
+      <span style="font-size: 14px; background: rgba(212,175,55,0.3); padding: 2px 8px; border-radius: 6px;">Enable ▶</span>
+    </div>
+
+    <!-- HOME SCREEN -->
+    <div id="screen-home" class="screen active">
+      <div class="top-bar">
+        <div style="display: flex; align-items: center;">
+          <span class="brand-title">Qinter</span>
+          <span class="badge-lite">LITE</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button class="icon-btn" onclick="showScreen('screen-settings')" title="Settings">⚙</button>
+        </div>
+      </div>
+
+      <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+        <span style="font-size: 13px; color: var(--gold-500); margin-bottom: 4px;">Join with Room Code</span>
+        
+        <div class="code-frame" id="home-code-frame">
+          <div class="code-cell" id="c0">·</div>
+          <div class="code-cell" id="c1">·</div>
+          <div class="code-cell" id="c2">·</div>
+          <div class="code-cell" id="c3">·</div>
+          <div class="code-cell" id="c4">·</div>
+          <div class="code-cell" id="c5">·</div>
+        </div>
+
+        <input type="text" id="hidden-code-input" maxlength="6" style="opacity: 0; position: absolute; pointer-events: none;" autofocus />
+
+        <div style="height: 16px;"></div>
+
+        <button class="btn-ghost" id="btn-join" disabled onclick="joinRoomAction()">
+          <span>🎧 Join Room</span>
+        </button>
+
+        <div style="height: 10px;"></div>
+
+        <button class="btn-ghost" onclick="triggerQrScan()">
+          <span>📷 Scan QR Code</span>
+        </button>
+        <input type="file" id="web-qr-file-input" accept="image/*" capture="environment" style="display: none;" onchange="handleWebQrFile(event)" />
+
+        <div style="height: 14px;"></div>
+
+        <button class="btn-gold-sheen" onclick="startHostAction()">
+          <span>🎙 Speak (Host Room)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- HOST SCREEN (EXACT MOBILE REPLICA) -->
+    <div id="screen-host" class="screen">
+      <!-- Top Bar: Room Code, QR Toggle, Download, AI, Live Status, End Button -->
+      <div class="host-top-bar">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <button class="icon-btn" onclick="leaveSession()" title="Close Room">✕</button>
+          <span id="host-room-title" style="color: var(--gold-100); font-weight: 700; font-size: 15px; letter-spacing: 0.5px;">Room</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <button class="icon-btn" id="btn-toggle-host-qr" onclick="toggleHostQrCard()" title="Show/Hide Room QR Code">📱</button>
+          <button class="icon-btn" onclick="downloadCurrentSession()" title="Download Speech Transcript">💾</button>
+          <button class="icon-btn" onclick="openDownloadAppModal('ai')" title="AI Speech Explainer (Mobile App)">✨</button>
+          <span class="host-live-pill" id="host-sync-pill">● Live (1)</span>
+          <button class="btn-end-session" onclick="leaveSession()">End</button>
+        </div>
+      </div>
+
+      <!-- Microphone Permission & Status Notice (Shows helpful instructions when mic needs user permission) -->
+      <div id="host-mic-notice" class="host-mic-notice" style="display: none;">
+        <span id="host-mic-notice-icon">🎙️</span>
+        <span id="host-mic-notice-text" style="flex: 1;">Microphone access required.</span>
+        <button id="host-mic-notice-btn" class="lang-chip" onclick="requestMicrophoneAccess()" style="padding: 3px 10px; font-size: 11px;">Enable Mic</button>
+      </div>
+
+      <!-- Expandable QR Card (matches mobile showQrModal) -->
+      <div id="host-qr-card" class="host-expandable-qr" style="display: none;">
+        <div class="qr-plate-host">
+          <canvas id="qr-canvas"></canvas>
+        </div>
+        <div id="host-qr-link-text" style="font-size: 11px; color: var(--gold-300); margin-top: 6px; text-align: center; word-break: break-all;"></div>
+        <button class="lang-chip" id="host-copy-link-btn" onclick="copyHostJoinLink()" style="margin-top: 6px; padding: 4px 12px; font-size: 11px;">📋 Copy Join Link</button>
+      </div>
+
+      <!-- Compact Unified Language Selector Bar (matches mobile HostScreen) -->
+      <div class="unified-lang-bar">
+        <div class="lang-pill-selector">
+          <span class="lang-pill-label">Speak</span>
+          <select id="host-source-lang" class="lang-pill-select" onchange="onHostSourceLangChange()">
+            <option value="fr" selected>Français</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="de">Deutsch</option>
+            <option value="it">Italiano</option>
+            <option value="ar">العربية</option>
+            <option value="zh">中文</option>
+            <option value="ja">日本語</option>
+          </select>
+        </div>
+
+        <button class="swap-lang-btn" onclick="swapHostLanguages()" title="Swap Speaking and Translation Languages">⇄</button>
+
+        <div class="lang-pill-selector">
+          <span class="lang-pill-label">Translate</span>
+          <select id="host-target-lang" class="lang-pill-select" onchange="onHostTargetLangChange()">
+            <option value="ar" selected>العربية</option>
+            <option value="fr">Français</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="de">Deutsch</option>
+            <option value="it">Italiano</option>
+            <option value="zh">中文</option>
+            <option value="ja">日本語</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Real-Time Live Speech & Translation Draft Card -->
+      <div id="host-live-draft-card" class="host-draft-card" style="display: none;">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+          <span class="live-dot-pulse"></span>
+          <span id="host-draft-header" style="font-size: 10px; color: var(--gold-400); font-weight: 700; letter-spacing: 0.5px;">🎙 LIVE SPEECH [EN]</span>
+        </div>
+        <div id="host-draft-original" style="font-size: 13px; color: var(--gold-300); font-style: italic; min-height: 18px;"></div>
+        <div id="host-draft-translated" style="font-size: 15px; color: var(--gold-100); font-weight: 700; margin-top: 4px;"></div>
+      </div>
+
+      <!-- Maximized Translation Transcript Feed (~75-80% height) -->
+      <div class="host-feed-container">
+        <!-- Empty State (identical to mobile) -->
+        <div id="host-empty-feed" class="host-empty-state">
+          <div style="font-size: 40px; color: rgba(212,175,55,0.4); margin-bottom: 8px;">🎙</div>
+          <div style="font-size: 16px; font-weight: 600; color: var(--gold-200); margin-bottom: 4px;">Ready to translate</div>
+          <div style="font-size: 12px; color: var(--gold-500); max-width: 260px; line-height: 1.4;">
+            Tap the mic or type below. Translations appear here live.
+          </div>
+        </div>
+
+        <!-- Populated Transcript List -->
+        <div class="transcript-list" id="host-transcript-list" style="display: none; flex: 1; overflow-y: auto;"></div>
+      </div>
+
+      <!-- DOCKED BOTTOM BAR (Compact Breathing Mic Orb + Precision Input + Send) -->
+      <div class="host-bottom-bar">
+        <!-- Compact Breathing Mic Orb (46px) -->
+        <button id="host-mic-btn" class="compact-mic-orb capturing" onclick="toggleHostMic()" title="Toggle Microphone On/Off">
+          <span id="host-mic-icon">🎙</span>
+        </button>
+
+        <!-- Precision Input Field -->
+        <div class="host-input-container">
+          <input type="text" id="quick-speech-input" class="host-text-input" placeholder="Type text to translate..." onkeydown="if(event.key==='Enter') sendManualClause()" />
+        </div>
+
+        <!-- Send Button -->
+        <button class="host-send-btn" onclick="sendManualClause()" title="Send">
+          <span>↑</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- LISTEN SCREEN -->
+    <div id="screen-listen" class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" onclick="leaveSession()">✕</button>
+        <span id="listen-room-title" style="font-size: 16px; color: var(--gold-100); font-weight: 500;">Room</span>
+        <div style="display: flex; gap: 4px;">
+          <button class="icon-btn" onclick="downloadCurrentSession()" title="Download Speech Transcript">💾</button>
+          <button class="icon-btn" onclick="openDownloadAppModal('ai')" title="AI Speech Explainer & Learning Agent (Mobile App)">✨</button>
+        </div>
+      </div>
+
+      <div class="chip-row" id="listen-lang-row"></div>
+
+      <div class="jump-pill" id="jump-live-pill" onclick="jumpToLive()">
+        <span>⏩ Jump to live (<span id="lag-sec">3</span>s behind)</span>
+      </div>
+
+      <div class="transcript-list" id="listen-transcript-list"></div>
+
+      <div class="draft-text" id="listen-draft-caption" style="min-height: 20px;"></div>
+
+      <button class="btn-ghost" id="raise-hand-btn" onclick="toggleRaiseHand()">
+        <span>✋ Raise Hand to Speak</span>
+      </button>
+    </div>
+
+    <!-- SETTINGS SCREEN -->
+    <div id="screen-settings" class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" onclick="showScreen('screen-home')">←</button>
+        <span class="brand-title" style="font-size: 20px;">Settings</span>
+        <div style="width: 32px;"></div>
+      </div>
+
+      <!-- ACCOUNT CARD (LITE EDITION - APP ONLY) -->
+      <div style="background: var(--ink-800); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span style="color: var(--gold-400); font-weight: 700; font-size: 11px; letter-spacing: 1px;">ACCOUNT & CLOUD</span>
+          <span class="badge-app-only">APP ONLY</span>
+        </div>
+        <div style="color: var(--gold-100); font-weight: 600; font-size: 14px; margin-bottom: 4px;">Sign Up & Cloud Profiles</div>
+        <div style="color: var(--gold-500); font-size: 12px; line-height: 1.5; margin-bottom: 14px;">
+          Signing up, Google authentication, saved transcripts, and multi-device cloud synchronization are available exclusively in the full Qinter Mobile App.
+        </div>
+        <button class="btn-gold-sheen" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 42px; border-radius: 10px; font-weight: 600; font-size: 13px; opacity: 0.6; cursor: default;" onclick="event.preventDefault()">
+          <span>📱 Mobile App Feature (Coming Soon)</span>
+        </button>
+      </div>
+
+      <div style="background: var(--ink-800); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px;">
+        <div style="color: var(--gold-100); font-weight: 500; font-size: 15px; margin-bottom: 4px;">Reader Comfort Weight</div>
+        <div style="color: var(--gold-500); font-size: 12px; margin-bottom: 12px;">Switch transcript body from Light (300) to Regular (400)</div>
+        <button class="lang-chip selected" id="weight-toggle-btn" onclick="toggleReaderWeight()">Current: Light (300)</button>
+      </div>
+
+      <div style="background: var(--ink-800); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px;">
+        <div style="color: var(--gold-400); font-weight: 700; font-size: 11px; letter-spacing: 1px; margin-bottom: 12px;">TRANSLATION & VOICE</div>
+        
+        <label style="display: block; font-size: 12px; color: var(--gold-300); margin-bottom: 6px;">Default Target Language</label>
+        <select id="web-pref-target-lang" style="width: 100%; box-sizing: border-box; background: var(--ink-900); border: 1px solid var(--line); color: var(--gold-100); padding: 9px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px;" onchange="saveWebTranslationPrefs()">
+          <option value="en">English (US)</option>
+          <option value="es">Español (Spanish)</option>
+          <option value="fr">Français (French)</option>
+          <option value="de">Deutsch (German)</option>
+          <option value="it">Italiano (Italian)</option>
+          <option value="ar">العربية (Arabic)</option>
+          <option value="ja">日本語 (Japanese)</option>
+          <option value="zh">中文 (Chinese)</option>
+        </select>
+
+        <label style="display: block; font-size: 12px; color: var(--gold-300); margin-bottom: 6px;">Speech Audio Speed</label>
+        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+          <button class="lang-chip" id="speed-btn-08" onclick="setWebSpeechRate(0.8)">0.8x Slow</button>
+          <button class="lang-chip selected" id="speed-btn-10" onclick="setWebSpeechRate(1.0)">1.0x Normal</button>
+          <button class="lang-chip" id="speed-btn-12" onclick="setWebSpeechRate(1.2)">1.2x Fast</button>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--line);">
+          <div>
+            <div style="color: var(--gold-100); font-size: 13px; font-weight: 500;">Auto-Pronounce Speech</div>
+            <div style="color: var(--gold-500); font-size: 11px;">Automatically speak incoming translation clauses</div>
+          </div>
+          <button class="lang-chip selected" id="web-auto-speech-btn" onclick="toggleWebAutoSpeech()">ON</button>
+        </div>
+      </div>
+
+      <div style="background: var(--ink-800); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px;">
+        <div style="color: var(--gold-400); font-weight: 700; font-size: 11px; letter-spacing: 1px; margin-bottom: 12px;">SYSTEM & PRIVACY</div>
+        <div style="color: var(--gold-300); font-size: 12px; line-height: 1.5; margin-bottom: 12px;">
+          🔒 <strong>Zero-Data Retention:</strong> Audio streaming, photos, and document sessions are processed securely and never stored for model training.
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 11px; color: var(--gold-500); font-family: monospace;">Qinter AI • v1.2.0 Cloud</span>
+          <button onclick="clearWebCache()" style="background: transparent; border: 1px solid var(--line); color: var(--gold-400); padding: 6px 12px; border-radius: 8px; font-size: 11px; cursor: pointer;">Clear Local Cache</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ASSISTANT BOTTOM SHEET (LITE NOTICE) -->
+    <div class="bottom-sheet" id="assistant-sheet">
+      <div class="sheet-handle" onclick="closeAssistantSheet()"></div>
+      <div class="sheet-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+        <span style="font-size: 15px; font-weight: 600; color: var(--gold-100);">✨ Qinter AI Agent</span>
+        <button class="icon-btn" style="width: 26px; height: 26px; font-size: 13px;" onclick="closeAssistantSheet()">✕</button>
+      </div>
+
+      <div class="sheet-content" style="background: var(--ink-700); border: 1px solid var(--gold-400); border-radius: 14px; padding: 20px 16px; text-align: center;">
+        <div style="font-size: 32px; margin-bottom: 8px;">✨</div>
+        <div style="color: var(--gold-100); font-weight: 600; font-size: 15px; margin-bottom: 6px;">AI Intelligence is Mobile Only</div>
+        <div style="color: var(--gold-300); font-size: 12px; line-height: 1.6; margin-bottom: 14px;">
+          Live speech explanations, grammatical coaching, context summarization, and AI agents run on the dedicated local AI engine in the Qinter Mobile App.
+        </div>
+        <button class="btn-gold-sheen" style="display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; opacity: 0.6; cursor: default;" onclick="event.preventDefault()">
+          <span>📱 Mobile App Feature (Coming Soon)</span>
+        </button>
+      </div>
+    </div>
+    <!-- DOCTRAD SCREEN -->
+    <div id="screen-doctrad" class="screen">
+      <div class="top-bar">
+        <span class="brand-title">DocTrad</span>
+        <span class="badge-coming-soon">COMING SOON</span>
+      </div>
+
+      <div class="doctrad-container">
+        <div class="doctrad-header-card">
+          <div class="doctrad-icon">📄</div>
+          <div class="doctrad-title">Document & Text Translation</div>
+          <div class="doctrad-desc">
+            Translate whole documents, PDF presentations, Markdown briefings, and multi-page texts with instant language alignment.
+          </div>
+        </div>
+
+        <div class="doctrad-feature-card">
+          <div class="doctrad-feature-title">⚡ Capabilities in Development</div>
+          <div class="doctrad-feature-list">
+            • Offline Document Translation via Google ML Kit<br>
+            • OCR & Scanned Document Text Extraction<br>
+            • Markdown Export & AI Document Summarization<br>
+            • Side-by-side Dual Column Bilingual Reader
+          </div>
+        </div>
+
+        <div class="doctrad-feature-card">
+          <div class="doctrad-feature-title">🔒 Private & On-Device</div>
+          <div class="doctrad-feature-list">
+            All text parsing and neural translation run locally on your device or via your local Ollama GPU node without external data leaks.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONVERSATION SCREEN (FACE-TO-FACE BILATERAL) -->
+    <div id="screen-conversation" class="screen">
+      <div class="top-bar">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span class="brand-title">Conversation</span>
+          <span style="font-size: 10px; background: rgba(212,175,55,0.18); color: var(--gold-300); border: 1px solid var(--gold-500); padding: 2px 6px; border-radius: 6px; font-weight: bold;">Bilateral AI</span>
+        </div>
+        <div style="display: flex; gap: 4px;">
+          <button class="icon-btn" onclick="toggleWebTableFlip()" title="Face-to-Face Table Flip">🔄</button>
+          <button class="icon-btn" id="conv-voice-toggle-btn" onclick="toggleWebConvVoice()" title="Toggle Natural Voice">🔊</button>
+          <button class="icon-btn" onclick="clearWebConversation()" title="Clear">🗑️</button>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; height: calc(100vh - 140px); gap: 10px; padding: 10px 0;">
+        <!-- Person 1 Card (Top) -->
+        <div class="doctrad-feature-card" id="card-person-1" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.3s ease;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <select id="conv-p1-lang" class="lang-chip" style="font-size: 12px; background: var(--ink-700); color: var(--gold-200); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;">
+              <option value="fr" selected>Français</option>
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="ar">العربية</option>
+              <option value="de">Deutsch</option>
+              <option value="it">Italiano</option>
+              <option value="zh">中文</option>
+              <option value="ja">日本語</option>
+            </select>
+            <button class="icon-btn" style="width: 28px; height: 28px; font-size: 13px;" onclick="replayPersonAudio(1)">🔊</button>
+          </div>
+          <div id="conv-p1-text" style="font-size: 17px; color: var(--gold-100); text-align: center; margin: 12px 0; min-height: 48px;">
+            Translations will appear here in Français.
+          </div>
+          <div style="text-align: center;">
+            <button class="btn-gold-sheen" id="conv-p1-mic" style="width: 52px; height: 52px; border-radius: 26px; font-size: 22px; padding: 0;" onclick="toggleConvMic(1)">🎤</button>
+          </div>
+        </div>
+
+        <!-- Middle Controls -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0 4px;">
+          <button class="lang-chip" onclick="swapWebConvLanguages()" style="padding: 4px 10px; font-size: 11px;">⇅ Swap</button>
+          <button class="lang-chip" id="conv-auto-btn" onclick="toggleWebConvAuto()" style="padding: 5px 14px; font-size: 12px; font-weight: bold;">⚡ Auto Bilateral</button>
+          <span id="conv-status-text" style="font-size: 11px; color: var(--gold-500);">Ready</span>
+        </div>
+
+        <!-- Person 2 Card (Bottom) -->
+        <div class="doctrad-feature-card" id="card-person-2" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <select id="conv-p2-lang" class="lang-chip" style="font-size: 12px; background: var(--ink-700); color: var(--gold-200); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;">
+              <option value="en" selected>English</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="ar">العربية</option>
+              <option value="de">Deutsch</option>
+              <option value="it">Italiano</option>
+              <option value="zh">中文</option>
+              <option value="ja">日本語</option>
+            </select>
+            <button class="icon-btn" style="width: 28px; height: 28px; font-size: 13px;" onclick="replayPersonAudio(2)">🔊</button>
+          </div>
+          <div id="conv-p2-text" style="font-size: 17px; color: var(--gold-100); text-align: center; margin: 12px 0; min-height: 48px;">
+            Translations will appear here in English.
+          </div>
+          <div style="text-align: center;">
+            <button class="btn-gold-sheen" id="conv-p2-mic" style="width: 52px; height: 52px; border-radius: 26px; font-size: 22px; padding: 0;" onclick="toggleConvMic(2)">🎤</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VISUAL TRAD SCREEN (VISION & PHOTO TRANSLATION) -->
+    <div id="screen-visual" class="screen">
+      <div class="top-bar">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span class="brand-title">Visual Trad</span>
+          <span style="font-size: 10px; background: rgba(212,175,55,0.18); color: var(--gold-300); border: 1px solid var(--gold-500); padding: 2px 6px; border-radius: 6px; font-weight: bold;">AI Vision</span>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <select id="web-visual-target-lang" class="lang-chip" style="font-size: 12px; background: var(--ink-700); color: var(--gold-200); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;" onchange="retranslateWebVisual()">
+            <option value="fr" selected>Français</option>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="ar">العربية</option>
+            <option value="de">Deutsch</option>
+            <option value="it">Italiano</option>
+            <option value="zh">中文</option>
+            <option value="ja">日本語</option>
+          </select>
+          <button class="icon-btn" onclick="clearWebVisual()" title="Clear">🗑️</button>
+        </div>
+      </div>
+
+      <!-- Hidden camera / gallery inputs -->
+      <input type="file" id="web-visual-camera" accept="image/*" capture="environment" style="display: none;" onchange="handleWebVisualImage(event)" />
+      <input type="file" id="web-visual-gallery" accept="image/*" style="display: none;" onchange="handleWebVisualImage(event)" />
+
+      <div style="display: flex; flex-direction: column; gap: 12px; padding: 10px 0 70px 0;">
+        <!-- Visual Viewport Card -->
+        <div class="doctrad-feature-card" id="web-visual-viewport" style="min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; position: relative; overflow: hidden; padding: 14px;">
+          <div id="web-visual-empty-state">
+            <div style="font-size: 40px; margin-bottom: 8px;">📷</div>
+            <div style="font-weight: 600; font-size: 15px; color: var(--gold-100); margin-bottom: 4px;">Snap or Choose a Photo</div>
+            <div style="font-size: 12px; color: var(--gold-500); line-height: 1.5; max-width: 280px;">
+              Capture street signs, restaurant menus, product labels, or document pages to translate with AI.
+            </div>
+          </div>
+          <img id="web-visual-preview-img" style="display: none; width: 100%; max-height: 240px; object-fit: contain; border-radius: 10px;" />
+          <div id="web-visual-loader" style="display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <div class="spinner"></div>
+            <div style="font-size: 13px; color: var(--gold-300); margin-top: 10px;">Analyzing text with AI Vision...</div>
+          </div>
+        </div>
+
+        <!-- Buttons Row -->
+        <div style="display: flex; gap: 10px;">
+          <button class="btn-gold-sheen" style="flex: 1; height: 46px; font-size: 13px; font-weight: 600;" onclick="document.getElementById('web-visual-camera').click()">
+            📷 Take Photo
+          </button>
+          <button class="lang-chip" style="flex: 1; height: 46px; font-size: 13px; display: flex; align-items: center; justify-content: center;" onclick="document.getElementById('web-visual-gallery').click()">
+            📁 Choose Photo
+          </button>
+        </div>
+
+        <!-- Translated Results Area -->
+        <div id="web-visual-results-card" style="display: none; background: var(--ink-800); border: 1px solid var(--gold-500); border-radius: 14px; padding: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <span style="font-size: 13px; font-weight: 600; color: var(--gold-300);">✨ AI Translation</span>
+            <div style="display: flex; gap: 6px;">
+              <button class="icon-btn" style="width: 28px; height: 28px; font-size: 13px;" onclick="copyWebVisualText()" title="Copy">📋</button>
+              <button class="icon-btn" style="width: 28px; height: 28px; font-size: 13px;" onclick="speakWebVisualText()" title="Play Voice">🔊</button>
+            </div>
+          </div>
+
+          <div id="web-visual-translated-text" style="font-size: 15px; color: var(--gold-100); line-height: 1.6; margin-bottom: 14px;">
+          </div>
+
+          <button class="lang-chip" style="width: 100%; padding: 8px 12px; font-size: 12px; margin-bottom: 10px; background: rgba(212,175,55,0.14); border-color: rgba(212,175,55,0.4);" onclick="askAiAboutVisualImage()">
+            ✨ Ask Qinter AI to explain or summarize this photo
+          </button>
+
+          <div style="cursor: pointer; font-size: 11px; color: var(--gold-500);" onclick="toggleWebVisualOriginal()">
+            <span id="web-visual-orig-toggle-label">View original detected text ▼</span>
+            <div id="web-visual-detected-text" style="display: none; margin-top: 6px; padding: 8px; background: var(--ink-900); border-radius: 8px; color: var(--gold-300); font-size: 12px; line-height: 1.5;"></div>
+          </div>
+        </div>
+
+        <div id="web-visual-status" style="font-size: 12px; color: var(--gold-500); text-align: center;">
+          Ready to capture or choose a photo
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM NAVBAR (LITE: MAIN SPEECH MENU ONLY) -->
+    <nav class="bottom-nav" id="main-bottom-nav">
+      <button class="nav-tab active" id="tab-speech" onclick="switchNavTab('speech')">
+        <span class="nav-icon">文A</span>
+        <span class="nav-label">Speech</span>
+      </button>
+      <button class="nav-tab locked" id="tab-conversation" onclick="openDownloadAppModal('conversation')">
+        <span class="nav-lock-badge">🔒</span>
+        <span class="nav-icon">🗣️</span>
+        <span class="nav-label">Conversation</span>
+      </button>
+      <button class="nav-tab locked" id="tab-visual" onclick="openDownloadAppModal('visual')">
+        <span class="nav-lock-badge">🔒</span>
+        <span class="nav-icon">📷</span>
+        <span class="nav-label">Visual</span>
+      </button>
+      <button class="nav-tab locked" id="tab-doctrad" onclick="openDownloadAppModal('doctrad')">
+        <span class="nav-lock-badge">🔒</span>
+        <span class="nav-icon">📄</span>
+        <span class="nav-label">DocTrad</span>
+      </button>
+    </nav>
+
+    <!-- DOWNLOAD APP MODAL (LITE VERSION EXCLUSIVES) -->
+    <div id="download-app-modal" class="app-modal-overlay" onclick="if(event.target===this) closeDownloadAppModal()">
+      <div class="app-modal-card">
+        <button onclick="closeDownloadAppModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; color: var(--gold-400); font-size: 18px; cursor: pointer;">✕</button>
+        <div class="app-modal-icon" id="app-modal-icon">📱</div>
+        <div class="app-modal-title" id="app-modal-title">Mobile App Feature</div>
+        <div class="app-modal-subtitle" id="app-modal-subtitle">Exclusive to Qinter for Android</div>
+        <div class="app-modal-desc">
+          <div id="app-modal-msg" style="margin-bottom: 12px; color: var(--gold-200); font-weight: 500;">
+            This feature is exclusive to the full Qinter Mobile Application.
+          </div>
+          <div class="app-feature-item">
+            <span>✨</span> <span><strong>Qinter AI Intelligence:</strong> Live grammatical explainer, sentence breakdown & instant speech summaries.</span>
+          </div>
+          <div class="app-feature-item">
+            <span>🗣️</span> <span><strong>Conversation Mode:</strong> Bilateral face-to-face natural voice translation.</span>
+          </div>
+          <div class="app-feature-item">
+            <span>📷</span> <span><strong>AI Vision Trad:</strong> Camera OCR & instant menu photo translations.</span>
+          </div>
+          <div class="app-feature-item">
+            <span>📄</span> <span><strong>DocTrad:</strong> Offline neural document & multi-page text translation.</span>
+          </div>
+          <div class="app-feature-item">
+            <span>👤</span> <span><strong>Cloud Accounts:</strong> Sign up & Google Sign-In with full session sync.</span>
+          </div>
+        </div>
+        <button class="btn-modal-primary" onclick="event.preventDefault();" style="opacity: 0.6; cursor: default;">
+          <span>📱 Mobile App Release (Coming Soon)</span>
+        </button>
+        <button class="btn-modal-ghost" onclick="closeDownloadAppModal()">
+          <span>✕ Continue with Web Lite (Speech Only)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- QR CAMERA SCANNER MODAL -->
+    <div class="qr-modal" id="qr-camera-modal">
+      <div style="font-size: 16px; font-weight: 600; color: var(--gold-100); margin-bottom: 12px;">Scan Room QR Code</div>
+      <div class="qr-video-box">
+        <video id="qr-video" playsinline muted></video>
+        <div class="qr-scan-line"></div>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button class="btn-ghost" style="padding: 8px 16px;" onclick="pickQrFile()">📁 Choose Image</button>
+        <button class="btn-ghost" style="padding: 8px 16px;" onclick="closeQrScanner()">✕ Close</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
