@@ -283,12 +283,16 @@ const server = http.createServer((req, res) => {
 
   // Info API: Returns LAN IP & Port for optical QR generation & secure context
   if (pathname === '/api/info') {
+    const proto = req.headers['x-forwarded-proto'] || (hasHttpsCert ? 'https' : 'http');
+    const host = req.headers.host || (LAN_IP + (PORT ? `:${PORT}` : ''));
+    const origin = `${proto}://${host}`;
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({
       lanIp: LAN_IP,
       port: PORT,
       httpsPort: hasHttpsCert ? HTTPS_PORT : null,
-      hasHttps: hasHttpsCert
+      hasHttps: hasHttpsCert,
+      publicOrigin: origin
     }));
     return;
   }

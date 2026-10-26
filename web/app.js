@@ -102,11 +102,12 @@ function hideIosBanner() {
   }, { passive: true });
 });
 
-// Query LAN IP from server
+// Query LAN IP from server (only adopted if running locally on localhost dev environment)
 fetch('/api/info')
   .then(r => r.json())
   .then(data => {
-    if (data.lanIp) {
+    const isLocalHost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+    if (isLocalHost && data.lanIp && !['localhost', '127.0.0.1', '0.0.0.0'].includes(data.lanIp)) {
       lanIpAddress = data.lanIp;
       serverPort = data.port || '8085';
     }
@@ -505,6 +506,32 @@ function fillTestCode(code) {
   updateCodeDisplay(code);
 }
 
+// Dynamic Join URL resolution:
+// On deployed cloud domains (Render, Railway, custom domains), ALWAYS use window.location.origin
+// so invite links and QR codes point to the public HTTPS URL (e.g. https://qinter-ai-alpha-test.onrender.com/?room=ABCDEF)
+// and NEVER fall back to localhost or internal container IP.
+function getJoinUrl(roomCode) {
+  const code = (roomCode || currentRoomCode || '').trim();
+  const hostname = window.location.hostname;
+  const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1';
+
+  // 1. If running on any public/deployed host (e.g. onrender.com, railway.app, custom domain):
+  if (!isLocalHost) {
+    return `${window.location.origin}/?room=${encodeURIComponent(code)}`;
+  }
+
+  // 2. Only if developing locally on host machine:
+  // Use LAN IP if the server provided one (e.g. 192.168.x.x) so mobile devices on the same WiFi can join
+  if (lanIpAddress && !['localhost', '127.0.0.1', '0.0.0.0'].includes(lanIpAddress)) {
+    const proto = window.location.protocol;
+    const port = serverPort ? `:${serverPort}` : '';
+    return `${proto}//${lanIpAddress}${port}/?room=${encodeURIComponent(code)}`;
+  }
+
+  // Local fallback
+  return `${window.location.origin}/?room=${encodeURIComponent(code)}`;
+}
+
 // Host actions (Browser Lite Speech Room - Exact Mobile HostScreen Replica)
 function startHostAction() {
   currentRole = 'HOST';
@@ -521,7 +548,7 @@ function startHostAction() {
   if (syncPill) syncPill.textContent = '● Live (1)';
 
   // Expandable QR Card setup
-  const joinUrl = `http://${lanIpAddress}:${serverPort}/?room=${currentRoomCode}`;
+  const joinUrl = getJoinUrl(currentRoomCode);
   const linkTextEl = document.getElementById('host-qr-link-text');
   if (linkTextEl) {
     linkTextEl.textContent = `Listeners join at ${joinUrl}`;
@@ -600,7 +627,7 @@ function toggleHostQrCard() {
 }
 
 function copyHostJoinLink() {
-  const joinUrl = `http://${lanIpAddress}:${serverPort}/?room=${currentRoomCode}`;
+  const joinUrl = getJoinUrl(currentRoomCode);
   const btn = document.getElementById('host-copy-link-btn');
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(joinUrl).then(() => {
@@ -922,12 +949,13 @@ async function requestMicrophoneAccess() {
 
   // 1. Insecure Context check (Chrome/Safari block mic on non-localhost HTTP)
   if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    const httpsPort = (window.location.port === '8085' ? '8086' : window.location.port);
-    const httpsUrl = `https://${location.hostname}:${httpsPort}/`;
+    const isLocalHost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname);
     showMicNotice(
-      '⚠️ Insecure Context: Browsers disable microphone on HTTP network IPs. Use http://localhost:8085 on host PC, or switch to HTTPS.',
+      isLocalHost
+        ? '⚠️ Insecure Context: Browsers disable microphone on HTTP. Use http://localhost:8085 on host PC or switch to HTTPS.'
+        : '⚠️ Insecure Context: Browsers require HTTPS for microphone access. Please switch to HTTPS.',
       'Switch to HTTPS',
-      () => { window.location.href = httpsUrl; },
+      () => { window.location.href = window.location.href.replace(/^http:/i, 'https:'); },
       'warning'
     );
     return false;
