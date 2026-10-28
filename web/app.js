@@ -1590,8 +1590,9 @@ function renderListenerLangs() {
 function toggleRaiseHand() {
   isHandRaised = !isHandRaised;
   const btn = document.getElementById('raise-hand-btn');
-  btn.textContent = isHandRaised ? '✋ Hand Raised (Waiting for speaker)' : '✋ Raise Hand to Speak';
-  broadcastPacket({ type: 'FLOOR_REQUEST' });
+  if (btn) {
+    btn.textContent = isHandRaised ? '✋ Hand Raised (Waiting for speaker)' : '✋ Raise Hand to Speak';
+  }
 }
 
 // Incoming Segment Translation & Audio Playback
