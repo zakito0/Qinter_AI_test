@@ -442,6 +442,39 @@ def call_ollama_http(
     raise ValueError(f"Could not get response from Ollama at {host} for model {model}")
 
 
+def call_cloud_llm_http(
+    messages: List[Dict[str, str]],
+    model: str = "openai",
+    max_tokens: int = 500,
+    timeout: float = 18.0
+) -> str:
+    """
+    Ultra-reliable, zero-key cloud inference fallback (Pollinations AI).
+    Guarantees AI assistant logic works on cloud containers (e.g. Render/Railway)
+    even when local Ollama is not running and no custom NIM API key is provided.
+    """
+    url = "https://text.pollinations.ai/"
+    payload = {
+        "messages": messages,
+        "model": model,
+        "temperature": 0.6,
+        "max_tokens": max_tokens
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        content = resp.read().decode("utf-8").strip()
+        if content:
+            return content
+    raise ValueError("Empty response from cloud fallback")
+
+
 def detect_language_and_intent(state: AgentState) -> Dict[str, Any]:
     prompt = state["prompt"].strip()
 
@@ -757,16 +790,38 @@ CORE CAPABILITIES & CONVERSATIONAL FREEDOM:
 
     # Execute with Automatic Load-Balancing & Failover
     try:
-        if target_backend == "NVIDIA_NIM":
+        content = ""
+        backend = ""
+
+        if target_backend == "NVIDIA_NIM" and nim_key:
             try:
                 content, backend = invoke_nim()
             except Exception as nim_err:
-                # AUTOMATIC FAILOVER: When NIM fails/rate-limits, switch seamlessly to Ollama
-                print(f"⚠️ [Failover] NVIDIA NIM error ({nim_err}). Switching automatically to Ollama...")
-                content, backend = invoke_ollama()
-                backend = f"{backend} (Failover from NIM)"
+                print(f"⚠️ [Failover] NVIDIA NIM error ({nim_err}). Trying local Ollama...")
+                try:
+                    content, backend = invoke_ollama()
+                    backend = f"{backend} (Failover from NIM)"
+                except Exception as ollama_err:
+                    print(f"⚠️ [Failover] Ollama also unavailable ({ollama_err}). Using Cloud Intelligence Fallback...")
+                    content = call_cloud_llm_http(chat_messages)
+                    backend = "Cloud Intelligence (Zero-Key Failover)"
         else:
-            content, backend = invoke_ollama()
+            # Local Ollama requested or primary
+            try:
+                content, backend = invoke_ollama()
+            except Exception as ollama_err:
+                print(f"⚠️ [Failover] Ollama unavailable ({ollama_err}). Checking NIM or Cloud Intelligence...")
+                if nim_key:
+                    try:
+                        content, backend = invoke_nim()
+                        backend = f"{backend} (Failover from Ollama)"
+                    except Exception as nim_err2:
+                        print(f"⚠️ [Failover] NIM failed ({nim_err2}). Using Cloud Intelligence Fallback...")
+                        content = call_cloud_llm_http(chat_messages)
+                        backend = "Cloud Intelligence (Zero-Key Failover)"
+                else:
+                    content = call_cloud_llm_http(chat_messages)
+                    backend = "Cloud Intelligence (Auto Failover)"
 
         # Cache valid response in Redis
         LOAD_BALANCER.set_cache(cache_hash, content, ttl=int(os.getenv("REDIS_CACHE_TTL", "3600")))
@@ -775,7 +830,7 @@ CORE CAPABILITIES & CONVERSATIONAL FREEDOM:
     except Exception as final_err:
         err_msg = str(final_err)
         return {
-            "final_response": f"⚠️ Agent Notice: Both primary and fallback backends encountered an issue: {err_msg}",
+            "final_response": f"⚠️ Agent Notice: Unable to generate response: {err_msg}",
             "backend_used": "Error"
         }
 

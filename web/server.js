@@ -280,6 +280,39 @@ async function handleAgentChat(body) {
     console.log('[Ollama Direct] Note:', e.message);
   }
 
+  // 3. Resilient Cloud Intelligence Fallback (Zero-Key Pollinations AI)
+  try {
+    const docPrompt = transcript ? `\nAttached Document / Transcript Context:\n"""\n${transcript.slice(-4000)}\n"""\n` : '';
+    const cloudResp = await fetch('https://text.pollinations.ai/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          {
+            role: 'system',
+            content: `You are Qinter AI, an advanced, highly versatile multilingual AI assistant (like ChatGPT). Answer general questions, coding, explanations, and creative requests freely. If document context is provided below, reference it when asked; otherwise answer freely.\n${docPrompt}\nAlways respond in the exact language of the user prompt with elegant markdown.`
+          },
+          { role: 'user', content: prompt }
+        ],
+        model: 'openai',
+        temperature: 0.6
+      }),
+      signal: AbortSignal.timeout(18000)
+    });
+    if (cloudResp.ok) {
+      const text = await cloudResp.text();
+      if (text && text.trim().length > 0) {
+        return {
+          reply: text.trim(),
+          model: 'Cloud Intelligence (Failover)',
+          citations: []
+        };
+      }
+    }
+  } catch (ce) {
+    console.log('[Cloud Failover] Note:', ce.message);
+  }
+
   return {
     reply: `⚠️ **Agent Connection Notice**\nCould not reach the LangGraph Agent backend. Ensure the LangGraph service is running on your VPS: \`python agent/agent_service.py --host 0.0.0.0 --port 8000\`.`,
     model: 'Offline',
