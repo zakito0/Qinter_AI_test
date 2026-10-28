@@ -1041,6 +1041,12 @@ function hideMicNotice() {
   if (notice) notice.style.display = 'none';
 }
 
+const clientTranslationCache = new Map();
+let draftAbortController = null;
+let lastInterimText = '';
+let lastInterimDraftTranslation = '';
+const hasNativeSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
 // Visual Audio-Level Analyser + Hybrid Real-Time Speech Recognition Engine
 function setupAudioLevelAnalyser(stream) {
   try {
@@ -1058,7 +1064,7 @@ function setupAudioLevelAnalyser(stream) {
     micAnalyser.smoothingTimeConstant = 0.4;
     source.connect(micAnalyser);
 
-    // Setup Server-Assisted ASR MediaRecorder (works on Opera GX, Edge, Chrome, Safari, Firefox)
+    // Setup Server-Assisted ASR MediaRecorder ONLY as a fallback for browsers without native SpeechRecognition (e.g. Firefox desktop)
     let asrMimeType = '';
     const candidateMimes = [
       'audio/webm;codecs=opus',
@@ -1066,16 +1072,13 @@ function setupAudioLevelAnalyser(stream) {
       'audio/ogg;codecs=opus',
       'audio/mp4'
     ];
-    if (window.MediaRecorder) {
+    if (!hasNativeSpeechRecognition && window.MediaRecorder) {
       for (const m of candidateMimes) {
         if (MediaRecorder.isTypeSupported(m)) {
           asrMimeType = m;
           break;
         }
       }
-    }
-
-    if (window.MediaRecorder) {
       try {
         if (asrRecorder && asrRecorder.state !== 'inactive') {
           try { asrRecorder.stop(); } catch (e) {}
@@ -1254,7 +1257,7 @@ function safeCommitSentence(text, precomputedTranslation = null) {
   if (!text || !text.trim()) return;
   const clean = text.trim();
   const now = Date.now();
-  if (lastCommittedText.toLowerCase() === clean.toLowerCase() && (now - lastCommittedTime < 2500)) {
+  if (lastCommittedText.toLowerCase() === clean.toLowerCase() && (now - lastCommittedTime < 1200)) {
     return;
   }
   lastCommittedText = clean;
@@ -1298,7 +1301,14 @@ function initSpeechRecognition() {
         if (event.results[i].isFinal) {
           const finalClause = event.results[i][0].transcript.trim();
           if (finalClause) {
-            safeCommitSentence(finalClause);
+            let precomputed = null;
+            const cacheKey = `${selectedHostLang}_${selectedHostTargetLang}_${finalClause.toLowerCase()}`;
+            if (lastInterimText && lastInterimText.toLowerCase() === finalClause.toLowerCase() && lastInterimDraftTranslation) {
+              precomputed = lastInterimDraftTranslation;
+            } else if (clientTranslationCache.has(cacheKey)) {
+              precomputed = clientTranslationCache.get(cacheKey);
+            }
+            safeCommitSentence(finalClause, precomputed);
           }
         } else {
           interim += event.results[i][0].transcript;
@@ -1336,11 +1346,11 @@ function initSpeechRecognition() {
                   if (isCapturing && currentRole === 'HOST' && speechRecognizer) {
                     try { speechRecognizer.start(); } catch (ignored) {}
                   }
-                }, 500);
+                }, 100);
               }
             }
           }
-        }, 150);
+        }, 20);
       }
     };
 
@@ -1351,7 +1361,6 @@ function initSpeechRecognition() {
 }
 
 let interimDebounceTimer = null;
-let lastInterimDraftTranslation = '';
 
 function handleHostInterimSpeech(interim) {
   if (!interim || !interim.trim()) {
@@ -1359,6 +1368,9 @@ function handleHostInterimSpeech(interim) {
     if (draftCard) draftCard.style.display = 'none';
     return;
   }
+
+  const cleanInterim = interim.trim();
+  lastInterimText = cleanInterim;
 
   const draftCard = document.getElementById('host-live-draft-card');
   const draftHeader = document.getElementById('host-draft-header');
@@ -1368,39 +1380,77 @@ function handleHostInterimSpeech(interim) {
 
   if (draftCard) draftCard.style.display = 'block';
   if (draftHeader) draftHeader.textContent = `🎙 LIVE SPEECH [${selectedHostLang.toUpperCase()}]`;
-  if (draftOrig) draftOrig.textContent = `"${interim}"`;
-  if (draftTrans && !lastInterimDraftTranslation) draftTrans.textContent = '';
-  if (micBtn) {
+  if (draftOrig) draftOrig.textContent = `"${cleanInterim}"`;
+  if (micBtn && isCapturing) {
     micBtn.className = 'compact-mic-orb speaking';
   }
 
-  clearTimeout(interimDebounceTimer);
-  interimDebounceTimer = setTimeout(async () => {
-    if (!interim || !isCapturing) return;
-    if (selectedHostTargetLang === selectedHostLang) {
-      lastInterimDraftTranslation = interim;
-    } else {
-      try {
-        const resp = await fetch(`/api/translate?text=${encodeURIComponent(interim)}&from=${selectedHostLang}&to=${selectedHostTargetLang}`);
-        const data = await resp.json();
-        if (data && data.translated) {
-          lastInterimDraftTranslation = data.translated;
-        }
-      } catch (e) {}
-    }
-
-    if (draftTrans && lastInterimDraftTranslation) {
-      draftTrans.textContent = `↳ ${lastInterimDraftTranslation}`;
-    }
-
+  // Same language: zero latency translation
+  if (selectedHostTargetLang === selectedHostLang) {
+    lastInterimDraftTranslation = cleanInterim;
+    if (draftTrans) draftTrans.textContent = `↳ ${cleanInterim}`;
     broadcastPacket({
       type: 'DRAFT',
-      text: interim,
+      text: cleanInterim,
+      sourceLang: selectedHostLang,
+      draftTranslation: cleanInterim,
+      targetLang: selectedHostTargetLang
+    });
+    return;
+  }
+
+  // Client memory cache check: 0ms response
+  const cacheKey = `${selectedHostLang}_${selectedHostTargetLang}_${cleanInterim.toLowerCase()}`;
+  if (clientTranslationCache.has(cacheKey)) {
+    lastInterimDraftTranslation = clientTranslationCache.get(cacheKey);
+    if (draftTrans) draftTrans.textContent = `↳ ${lastInterimDraftTranslation}`;
+    broadcastPacket({
+      type: 'DRAFT',
+      text: cleanInterim,
       sourceLang: selectedHostLang,
       draftTranslation: lastInterimDraftTranslation,
       targetLang: selectedHostTargetLang
     });
-  }, 110);
+    return;
+  }
+
+  // Cancel prior in-flight draft translation request so requests don't queue up
+  if (draftAbortController) {
+    try { draftAbortController.abort(); } catch (e) {}
+  }
+  draftAbortController = new AbortController();
+  const signal = draftAbortController.signal;
+
+  clearTimeout(interimDebounceTimer);
+  interimDebounceTimer = setTimeout(async () => {
+    if (!isCapturing || !cleanInterim) return;
+    try {
+      const resp = await fetch(`/api/translate?text=${encodeURIComponent(cleanInterim)}&from=${selectedHostLang}&to=${selectedHostTargetLang}`, {
+        signal
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.translated) {
+          lastInterimDraftTranslation = data.translated;
+          clientTranslationCache.set(cacheKey, data.translated);
+          if (draftTrans && lastInterimText === cleanInterim) {
+            draftTrans.textContent = `↳ ${lastInterimDraftTranslation}`;
+          }
+          broadcastPacket({
+            type: 'DRAFT',
+            text: cleanInterim,
+            sourceLang: selectedHostLang,
+            draftTranslation: lastInterimDraftTranslation,
+            targetLang: selectedHostTargetLang
+          });
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        console.warn('Interim draft translation notice:', e);
+      }
+    }
+  }, 90);
 }
 
 function toggleHostMic() {
@@ -1490,18 +1540,25 @@ async function commitClause(text, precomputedTranslation = null) {
   const now = new Date();
   const ts = `${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
-  // Fetch translation for target language (use precomputed if available)
+  // Fetch translation for target language (use precomputed or client cache if available)
   let hostTranslated = precomputedTranslation || trimmed;
-  if (!precomputedTranslation && selectedHostTargetLang && selectedHostTargetLang !== selectedHostLang) {
+  const cacheKey = `${selectedHostLang}_${selectedHostTargetLang}_${trimmed.toLowerCase()}`;
+
+  if (!precomputedTranslation && clientTranslationCache.has(cacheKey)) {
+    hostTranslated = clientTranslationCache.get(cacheKey);
+  } else if (!precomputedTranslation && selectedHostTargetLang && selectedHostTargetLang !== selectedHostLang) {
     try {
       const resp = await fetch(`/api/translate?text=${encodeURIComponent(trimmed)}&from=${selectedHostLang}&to=${selectedHostTargetLang}`);
       const data = await resp.json();
       if (data && data.translated) {
         hostTranslated = data.translated;
+        clientTranslationCache.set(cacheKey, hostTranslated);
       }
     } catch (e) {
       console.warn('Host translation error:', e);
     }
+  } else if (precomputedTranslation) {
+    clientTranslationCache.set(cacheKey, precomputedTranslation);
   }
 
   // Silenced on Host (matches mobile HostScreen.kt):
@@ -2181,9 +2238,16 @@ function startConvListening(person) {
 async function processConvTranslation(person, text, sourceLang, targetLang) {
   setConvStatus("Translating...");
   try {
-    const resp = await fetch(`/api/translate?text=${encodeURIComponent(text)}&from=${sourceLang}&to=${targetLang}`);
-    const data = await resp.json();
-    const translated = data.translated || text;
+    const cacheKey = `${sourceLang}_${targetLang}_${text.trim().toLowerCase()}`;
+    let translated = text;
+    if (clientTranslationCache.has(cacheKey)) {
+      translated = clientTranslationCache.get(cacheKey);
+    } else {
+      const resp = await fetch(`/api/translate?text=${encodeURIComponent(text)}&from=${sourceLang}&to=${targetLang}`);
+      const data = await resp.json();
+      translated = data.translated || text;
+      clientTranslationCache.set(cacheKey, translated);
+    }
 
     if (person === 1) {
       // Person 1 spoke -> translated to Person 2
