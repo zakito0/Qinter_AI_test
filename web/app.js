@@ -1042,10 +1042,9 @@ function hideMicNotice() {
 }
 
 const clientTranslationCache = new Map();
-let draftAbortController = null;
 let lastInterimText = '';
 let lastInterimDraftTranslation = '';
-const hasNativeSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+let lastNativeSpeechTimestamp = 0;
 
 // Visual Audio-Level Analyser + Hybrid Real-Time Speech Recognition Engine
 function setupAudioLevelAnalyser(stream) {
@@ -1064,7 +1063,7 @@ function setupAudioLevelAnalyser(stream) {
     micAnalyser.smoothingTimeConstant = 0.4;
     source.connect(micAnalyser);
 
-    // Setup Server-Assisted ASR MediaRecorder ONLY as a fallback for browsers without native SpeechRecognition (e.g. Firefox desktop)
+    // Setup Server-Assisted ASR MediaRecorder (works across Opera GX, Brave, Chrome, Edge, Safari, Firefox)
     let asrMimeType = '';
     const candidateMimes = [
       'audio/webm;codecs=opus',
@@ -1072,7 +1071,7 @@ function setupAudioLevelAnalyser(stream) {
       'audio/ogg;codecs=opus',
       'audio/mp4'
     ];
-    if (!hasNativeSpeechRecognition && window.MediaRecorder) {
+    if (window.MediaRecorder) {
       for (const m of candidateMimes) {
         if (MediaRecorder.isTypeSupported(m)) {
           asrMimeType = m;
@@ -1186,6 +1185,11 @@ function setupAudioLevelAnalyser(stream) {
 // Process audio slice via Server ASR (backed by SpeechRecognition + ffmpeg)
 async function processAudioSliceTranscription(audioBlob) {
   if (!isCapturing || currentRole !== 'HOST') return;
+  // If native browser SpeechRecognition is active and produced speech recently, skip redundant server slice
+  const now = Date.now();
+  if (lastNativeSpeechTimestamp && (now - lastNativeSpeechTimestamp < 3000)) {
+    return;
+  }
   try {
     const targetLang = selectedHostLang || 'fr';
     const resp = await fetch(`/api/transcribe?lang=${encodeURIComponent(targetLang)}`, {
@@ -1296,6 +1300,7 @@ function initSpeechRecognition() {
     };
 
     speechRecognizer.onresult = (event) => {
+      lastNativeSpeechTimestamp = Date.now();
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         if (event.results[i].isFinal) {
@@ -1350,7 +1355,7 @@ function initSpeechRecognition() {
               }
             }
           }
-        }, 20);
+        }, 50);
       }
     };
 
@@ -1402,53 +1407,48 @@ function handleHostInterimSpeech(interim) {
   // Client memory cache check: 0ms response
   const cacheKey = `${selectedHostLang}_${selectedHostTargetLang}_${cleanInterim.toLowerCase()}`;
   if (clientTranslationCache.has(cacheKey)) {
-    lastInterimDraftTranslation = clientTranslationCache.get(cacheKey);
-    if (draftTrans) draftTrans.textContent = `↳ ${lastInterimDraftTranslation}`;
-    broadcastPacket({
-      type: 'DRAFT',
-      text: cleanInterim,
-      sourceLang: selectedHostLang,
-      draftTranslation: lastInterimDraftTranslation,
-      targetLang: selectedHostTargetLang
-    });
-    return;
+    const cached = clientTranslationCache.get(cacheKey);
+    if (cached && cached.toLowerCase() !== cleanInterim.toLowerCase()) {
+      lastInterimDraftTranslation = cached;
+      if (draftTrans) draftTrans.textContent = `↳ ${lastInterimDraftTranslation}`;
+      broadcastPacket({
+        type: 'DRAFT',
+        text: cleanInterim,
+        sourceLang: selectedHostLang,
+        draftTranslation: lastInterimDraftTranslation,
+        targetLang: selectedHostTargetLang
+      });
+      return;
+    }
   }
-
-  // Cancel prior in-flight draft translation request so requests don't queue up
-  if (draftAbortController) {
-    try { draftAbortController.abort(); } catch (e) {}
-  }
-  draftAbortController = new AbortController();
-  const signal = draftAbortController.signal;
 
   clearTimeout(interimDebounceTimer);
   interimDebounceTimer = setTimeout(async () => {
     if (!isCapturing || !cleanInterim) return;
     try {
-      const resp = await fetch(`/api/translate?text=${encodeURIComponent(cleanInterim)}&from=${selectedHostLang}&to=${selectedHostTargetLang}`, {
-        signal
-      });
+      const resp = await fetch(`/api/translate?text=${encodeURIComponent(cleanInterim)}&from=${selectedHostLang}&to=${selectedHostTargetLang}`);
       if (resp.ok) {
         const data = await resp.json();
-        if (data && data.translated) {
-          lastInterimDraftTranslation = data.translated;
-          clientTranslationCache.set(cacheKey, data.translated);
-          if (draftTrans && lastInterimText === cleanInterim) {
-            draftTrans.textContent = `↳ ${lastInterimDraftTranslation}`;
+        if (data && data.translated && data.translated.trim()) {
+          const trans = data.translated.trim();
+          if (trans.toLowerCase() !== cleanInterim.toLowerCase()) {
+            lastInterimDraftTranslation = trans;
+            clientTranslationCache.set(cacheKey, trans);
+            if (draftTrans && lastInterimText === cleanInterim) {
+              draftTrans.textContent = `↳ ${lastInterimDraftTranslation}`;
+            }
+            broadcastPacket({
+              type: 'DRAFT',
+              text: cleanInterim,
+              sourceLang: selectedHostLang,
+              draftTranslation: lastInterimDraftTranslation,
+              targetLang: selectedHostTargetLang
+            });
           }
-          broadcastPacket({
-            type: 'DRAFT',
-            text: cleanInterim,
-            sourceLang: selectedHostLang,
-            draftTranslation: lastInterimDraftTranslation,
-            targetLang: selectedHostTargetLang
-          });
         }
       }
     } catch (e) {
-      if (e.name !== 'AbortError') {
-        console.warn('Interim draft translation notice:', e);
-      }
+      console.warn('Interim draft translation notice:', e);
     }
   }, 90);
 }
@@ -1541,24 +1541,45 @@ async function commitClause(text, precomputedTranslation = null) {
   const ts = `${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
   // Fetch translation for target language (use precomputed or client cache if available)
-  let hostTranslated = precomputedTranslation || trimmed;
+  const isDifferentLang = selectedHostTargetLang && selectedHostTargetLang !== selectedHostLang;
   const cacheKey = `${selectedHostLang}_${selectedHostTargetLang}_${trimmed.toLowerCase()}`;
+  let hostTranslated = '';
 
-  if (!precomputedTranslation && clientTranslationCache.has(cacheKey)) {
-    hostTranslated = clientTranslationCache.get(cacheKey);
-  } else if (!precomputedTranslation && selectedHostTargetLang && selectedHostTargetLang !== selectedHostLang) {
+  // 1. Check precomputed draft
+  if (precomputedTranslation && precomputedTranslation.trim()) {
+    const pt = precomputedTranslation.trim();
+    if (!isDifferentLang || pt.toLowerCase() !== trimmed.toLowerCase()) {
+      hostTranslated = pt;
+    }
+  }
+
+  // 2. Check client translation cache
+  if (!hostTranslated && clientTranslationCache.has(cacheKey)) {
+    const cached = clientTranslationCache.get(cacheKey);
+    if (!isDifferentLang || cached.toLowerCase() !== trimmed.toLowerCase()) {
+      hostTranslated = cached;
+    }
+  }
+
+  // 3. Fetch from backend API if target differs and still untranslated
+  if (!hostTranslated && isDifferentLang) {
     try {
       const resp = await fetch(`/api/translate?text=${encodeURIComponent(trimmed)}&from=${selectedHostLang}&to=${selectedHostTargetLang}`);
-      const data = await resp.json();
-      if (data && data.translated) {
-        hostTranslated = data.translated;
-        clientTranslationCache.set(cacheKey, hostTranslated);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.translated && data.translated.trim()) {
+          hostTranslated = data.translated.trim();
+          clientTranslationCache.set(cacheKey, hostTranslated);
+        }
       }
     } catch (e) {
       console.warn('Host translation error:', e);
     }
-  } else if (precomputedTranslation) {
-    clientTranslationCache.set(cacheKey, precomputedTranslation);
+  }
+
+  // Fallback if same language or network error
+  if (!hostTranslated) {
+    hostTranslated = trimmed;
   }
 
   // Silenced on Host (matches mobile HostScreen.kt):
