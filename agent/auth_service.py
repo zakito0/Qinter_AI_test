@@ -38,9 +38,16 @@ _db_lock = threading.Lock()
 _attempts: Dict[str, list] = {}  # naive in-memory rate limiter: key -> [timestamps]
 
 
+DEFAULT_GOOGLE_CLIENT_IDS = {
+    "676889473726-tmlsvgko7m7uh6qekl1ej4vd0eb3j1om.apps.googleusercontent.com",
+    "676889473726-qinter.apps.googleusercontent.com"
+}
+
+
 def _google_client_ids():
     raw = os.getenv("GOOGLE_CLIENT_ID", "") + "," + os.getenv("GOOGLE_ANDROID_CLIENT_ID", "")
-    return {c.strip() for c in raw.split(",") if c.strip()}
+    env_ids = {c.strip() for c in raw.split(",") if c.strip()}
+    return env_ids if env_ids else DEFAULT_GOOGLE_CLIENT_IDS
 
 
 def _connect() -> sqlite3.Connection:
