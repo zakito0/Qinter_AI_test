@@ -1,4 +1,4 @@
-// Language Catalog with BCP-47 tags
+// Language Catalog with BCP-47 tags (matches Android SupportedLanguages)
 const LANGUAGES = [
   { code: 'en', native: 'English', bcp: 'en-US' },
   { code: 'ar', native: 'العربية', bcp: 'ar-SA', rtl: true },
@@ -6,8 +6,20 @@ const LANGUAGES = [
   { code: 'es', native: 'Español', bcp: 'es-ES' },
   { code: 'de', native: 'Deutsch', bcp: 'de-DE' },
   { code: 'it', native: 'Italiano', bcp: 'it-IT' },
+  { code: 'pt', native: 'Português', bcp: 'pt-PT' },
+  { code: 'ru', native: 'Русский', bcp: 'ru-RU' },
   { code: 'zh', native: '中文', bcp: 'zh-CN' },
-  { code: 'ja', native: '日本語', bcp: 'ja-JP' }
+  { code: 'ja', native: '日本語', bcp: 'ja-JP' },
+  { code: 'ko', native: '한국어', bcp: 'ko-KR' },
+  { code: 'hi', native: 'हिन्दी', bcp: 'hi-IN' },
+  { code: 'tr', native: 'Türkçe', bcp: 'tr-TR' },
+  { code: 'nl', native: 'Nederlands', bcp: 'nl-NL' },
+  { code: 'pl', native: 'Polski', bcp: 'pl-PL' },
+  { code: 'sv', native: 'Svenska', bcp: 'sv-SE' },
+  { code: 'fa', native: 'فارسی', bcp: 'fa-IR', rtl: true },
+  { code: 'ur', native: 'اردو', bcp: 'ur-PK', rtl: true },
+  { code: 'he', native: 'עברית', bcp: 'he-IL', rtl: true },
+  { code: 'id', native: 'Bahasa Indonesia', bcp: 'id-ID' }
 ];
 
 let currentRole = null; // 'HOST' or 'LISTENER'
@@ -2418,17 +2430,8 @@ function showConvToast(msg) {
 }
 
 function getBcp47ForLang(code) {
-  const map = {
-    'en': 'en-US',
-    'fr': 'fr-FR',
-    'es': 'es-ES',
-    'ar': 'ar-SA',
-    'de': 'de-DE',
-    'it': 'it-IT',
-    'zh': 'zh-CN',
-    'ja': 'ja-JP'
-  };
-  return map[code] || 'en-US';
+  const item = LANGUAGES.find(l => l.code === (code || '').toLowerCase());
+  return item ? item.bcp : 'en-US';
 }
 
 // ==========================================

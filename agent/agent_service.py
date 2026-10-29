@@ -1013,10 +1013,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/transcribe"):
             parsed = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(parsed.query)
-            lang = qs.get("lang", ["fr"])[0]
             lang_map = {
                 "fr": "fr-FR", "en": "en-US", "ar": "ar-SA", "es": "es-ES",
-                "de": "de-DE", "it": "it-IT", "zh": "zh-CN", "ja": "ja-JP"
+                "de": "de-DE", "it": "it-IT", "pt": "pt-PT", "ru": "ru-RU",
+                "zh": "zh-CN", "ja": "ja-JP", "ko": "ko-KR", "hi": "hi-IN",
+                "tr": "tr-TR", "nl": "nl-NL", "pl": "pl-PL", "sv": "sv-SE",
+                "fa": "fa-IR", "ur": "ur-PK", "he": "he-IL", "id": "id-ID"
             }
             target_lang = lang_map.get(lang.lower(), lang)
             content_length = int(self.headers.get("Content-Length", 0) or 0)
