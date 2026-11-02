@@ -67,6 +67,24 @@ const MIME = {
 
 const translationCache = new Map();
 const ttsAudioCache = new Map();
+const activeRooms = new Map(); // roomCode -> { code, hostWs, lat, lon, sourceLang, targetLang, createdAt }
+
+// Haversine formula to calculate physical distance between two GPS coordinates in meters
+function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+  if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
+  const R = 6371e3; // Earth radius in meters
+  const rad = Math.PI / 180;
+  const φ1 = lat1 * rad;
+  const φ2 = lat2 * rad;
+  const Δφ = (lat2 - lat1) * rad;
+  const Δλ = (lon2 - lon1) * rad;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
 
 async function getTtsAudioBuffer(text, lang, voice = 'male_natural', rate = '1.0') {
   const cleanVoice = (voice || 'male_natural').trim().toLowerCase();
@@ -505,6 +523,73 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 1. Session Existence Pre-Flight Validation API
+  if (pathname === '/api/rooms/check') {
+    const code = (parsedUrl.searchParams.get('code') || '').trim().toUpperCase();
+    const roomMeta = activeRooms.get(code);
+    const clientSet = rooms.get(code);
+    const isLive = Boolean(roomMeta && roomMeta.hostWs && roomMeta.hostWs.readyState === WebSocket.OPEN);
+    const hasClients = Boolean(clientSet && clientSet.size > 0);
+
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    if (code && (isLive || hasClients)) {
+      res.end(JSON.stringify({
+        exists: true,
+        hostActive: isLive,
+        participantCount: clientSet ? clientSet.size : 1,
+        sourceLang: roomMeta ? roomMeta.sourceLang : null,
+        targetLang: roomMeta ? roomMeta.targetLang : null
+      }));
+    } else {
+      res.end(JSON.stringify({
+        exists: false,
+        hostActive: false,
+        error: 'The session does not exist'
+      }));
+    }
+    return;
+  }
+
+  // 2. Translate Spot Proximity Discovery API
+  if (pathname === '/api/spots/nearest') {
+    const lat = parseFloat(parsedUrl.searchParams.get('lat'));
+    const lon = parseFloat(parsedUrl.searchParams.get('lon'));
+    const maxDist = parseInt(parsedUrl.searchParams.get('maxDist') || '15000', 10); // default 15km
+
+    const spots = [];
+    for (const [code, meta] of activeRooms.entries()) {
+      if (meta.hostWs && meta.hostWs.readyState === WebSocket.OPEN) {
+        let dist = null;
+        if (!isNaN(lat) && !isNaN(lon) && meta.lat != null && meta.lon != null) {
+          dist = calculateDistanceMeters(lat, lon, meta.lat, meta.lon);
+          if (dist > maxDist) continue;
+        }
+        const clientCount = rooms.has(code) ? rooms.get(code).size : 1;
+        spots.push({
+          roomCode: code,
+          distanceMeters: dist,
+          sourceLang: meta.sourceLang || 'fr',
+          targetLang: meta.targetLang || 'en',
+          participantCount: clientCount
+        });
+      }
+    }
+
+    spots.sort((a, b) => {
+      if (a.distanceMeters == null) return 1;
+      if (b.distanceMeters == null) return -1;
+      return a.distanceMeters - b.distanceMeters;
+    });
+
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({
+      spots: spots,
+      total: spots.length,
+      nearest: spots[0] || null
+    }));
+    return;
+  }
+
   // Info API: Returns LAN IP & Port for optical QR generation & secure context
   if (pathname === '/api/info') {
     const proto = req.headers['x-forwarded-proto'] || (hasHttpsCert ? 'https' : 'http');
@@ -809,22 +894,61 @@ function broadcastToRoom(roomCode, message, senderWs = null) {
 
 wss.on('connection', (ws) => {
   let joinedRoom = null;
+  let userRole = 'LISTENER';
 
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data.toString());
       if (msg.type === 'JOIN_ROOM') {
         const code = (msg.roomCode || '').toUpperCase();
+        userRole = (msg.role || 'LISTENER').toUpperCase();
         joinedRoom = code;
+
+        // If a listener tries to join a room that does not exist or has no active host
+        if (userRole === 'LISTENER') {
+          const roomMeta = activeRooms.get(code);
+          const clientSet = rooms.get(code);
+          const isHostActive = Boolean(roomMeta && roomMeta.hostWs && roomMeta.hostWs.readyState === WebSocket.OPEN);
+          const hasExisting = Boolean(clientSet && clientSet.size > 0);
+
+          if (!isHostActive && !hasExisting) {
+            ws.send(JSON.stringify({
+              type: 'ROOM_ERROR',
+              roomCode: code,
+              error: 'The session does not exist'
+            }));
+            return;
+          }
+        }
+
         if (!rooms.has(code)) {
           rooms.set(code, new Set());
         }
         rooms.get(code).add(ws);
 
+        if (userRole === 'HOST') {
+          activeRooms.set(code, {
+            code,
+            hostWs: ws,
+            lat: (typeof msg.lat === 'number') ? msg.lat : null,
+            lon: (typeof msg.lon === 'number') ? msg.lon : null,
+            sourceLang: msg.sourceLang || 'fr',
+            targetLang: msg.targetLang || 'en',
+            createdAt: Date.now()
+          });
+        }
+
         // Notify room of updated participant count
         const count = rooms.get(code).size;
         broadcastToRoom(code, { type: 'PARTICIPANTS_COUNT', count, roomCode: code });
-        ws.send(JSON.stringify({ type: 'JOIN_OK', roomCode: code, count }));
+        ws.send(JSON.stringify({ type: 'JOIN_OK', roomCode: code, count, role: userRole }));
+      } else if (msg.type === 'UPDATE_SPOT' && joinedRoom && userRole === 'HOST') {
+        const existing = activeRooms.get(joinedRoom) || { code: joinedRoom, hostWs: ws };
+        if (typeof msg.lat === 'number') existing.lat = msg.lat;
+        if (typeof msg.lon === 'number') existing.lon = msg.lon;
+        if (msg.sourceLang) existing.sourceLang = msg.sourceLang;
+        if (msg.targetLang) existing.targetLang = msg.targetLang;
+        activeRooms.set(joinedRoom, existing);
       } else if (joinedRoom) {
         broadcastToRoom(joinedRoom, msg, ws);
       }
@@ -838,6 +962,17 @@ wss.on('connection', (ws) => {
       const set = rooms.get(joinedRoom);
       set.delete(ws);
       const count = set.size;
+
+      // Clean up host room immediately when host socket closes
+      if (activeRooms.has(joinedRoom) && activeRooms.get(joinedRoom).hostWs === ws) {
+        activeRooms.delete(joinedRoom);
+        broadcastToRoom(joinedRoom, {
+          type: 'HOST_CLOSED',
+          roomCode: joinedRoom,
+          message: 'The host has ended the translation session'
+        });
+      }
+
       if (count === 0) {
         rooms.delete(joinedRoom);
       } else {
