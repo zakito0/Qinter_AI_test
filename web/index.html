@@ -287,6 +287,15 @@
           <option value="id">Bahasa Indonesia</option>
         </select>
 
+        <label style="display: block; font-size: 12px; color: var(--gold-300); margin-bottom: 6px;">AI Voice Character (VoiceStudio)</label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+          <button class="lang-chip selected" id="voice-btn-male_natural" onclick="setWebVoicePreset('male_natural')">👨 Male Natural</button>
+          <button class="lang-chip" id="voice-btn-male_deep" onclick="setWebVoicePreset('male_deep')">🎙️ Male Deep</button>
+          <button class="lang-chip" id="voice-btn-female_natural" onclick="setWebVoicePreset('female_natural')">👩 Female Natural</button>
+          <button class="lang-chip" id="voice-btn-female_warm" onclick="setWebVoicePreset('female_warm')">✨ Female Warm</button>
+        </div>
+        <button onclick="previewWebVoice()" style="width: 100%; background: var(--ink-900); border: 1px solid var(--gold-400); color: var(--gold-200); padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; margin-bottom: 14px;">🔊 Preview Selected AI Voice</button>
+
         <label style="display: block; font-size: 12px; color: var(--gold-300); margin-bottom: 6px;">Speech Audio Speed</label>
         <div style="display: flex; gap: 8px; margin-bottom: 14px;">
           <button class="lang-chip" id="speed-btn-08" onclick="setWebSpeechRate(0.8)">0.8x Slow</button>

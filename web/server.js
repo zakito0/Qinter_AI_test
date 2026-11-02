@@ -45,21 +45,22 @@ const MIME = {
 const translationCache = new Map();
 const ttsAudioCache = new Map();
 
-async function getTtsAudioBuffer(text, lang) {
-  const cacheKey = `${lang}_${text.trim().toLowerCase()}`;
+async function getTtsAudioBuffer(text, lang, voice = 'male_natural', rate = '1.0') {
+  const cleanVoice = (voice || 'male_natural').trim().toLowerCase();
+  const cleanRate = (rate || '1.0').toString().trim();
+  const cacheKey = `${lang}_${cleanVoice}_${cleanRate}_${text.trim().toLowerCase()}`;
   if (ttsAudioCache.has(cacheKey)) {
     return ttsAudioCache.get(cacheKey);
   }
 
-  const query = encodeURIComponent(text.trim().slice(0, 250));
-  const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${query}&tl=${lang}&client=tw-ob`;
-  const resp = await fetch(ttsUrl, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-    signal: AbortSignal.timeout(4500)
+  const query = encodeURIComponent(text.trim().slice(0, 350));
+  const agentTtsUrl = `http://127.0.0.1:8000/api/tts?text=${query}&lang=${encodeURIComponent(lang)}&voice=${encodeURIComponent(cleanVoice)}&rate=${encodeURIComponent(cleanRate)}`;
+  const resp = await fetch(agentTtsUrl, {
+    signal: AbortSignal.timeout(7500)
   });
 
   if (!resp.ok) {
-    throw new Error(`TTS upstream error: ${resp.status}`);
+    throw new Error(`VoiceStudio TTS service error: ${resp.status}`);
   }
 
   const arrayBuf = await resp.arrayBuffer();
@@ -81,9 +82,12 @@ function normalizeLangCode(code) {
   return c;
 }
 
-// ---- Official translation providers (keys come from environment variables) ----
+// ---- 3-System Translation Engine (DeepL Official -> Google Cloud Official -> Open-Source Multi-Provider) ----
 const DEEPL_KEY = (process.env.DEEPL_API_KEY || '').trim();
 const GOOGLE_TRANSLATE_KEY = (process.env.GOOGLE_TRANSLATE_API_KEY || '').trim();
+const LIBRETRANSLATE_URL = (process.env.LIBRETRANSLATE_URL || '').trim();
+const LIBRETRANSLATE_KEY = (process.env.LIBRETRANSLATE_API_KEY || '').trim();
+
 const DEEPL_TARGETS = {
   en: 'EN-US', ar: 'AR', fr: 'FR', es: 'ES', de: 'DE', it: 'IT', pt: 'PT-PT', ru: 'RU',
   'zh-cn': 'ZH-HANS', ja: 'JA', ko: 'KO', tr: 'TR', nl: 'NL', pl: 'PL', sv: 'SV', id: 'ID', he: 'HE'
@@ -93,6 +97,7 @@ const DEEPL_SOURCES = {
   'zh-cn': 'ZH', ja: 'JA', ko: 'KO', tr: 'TR', nl: 'NL', pl: 'PL', sv: 'SV', id: 'ID', he: 'HE'
 };
 
+// System 1: Official DeepL API
 async function translateWithDeepL(text, sl, tl) {
   if (!DEEPL_KEY) return null;
   const target = DEEPL_TARGETS[tl.toLowerCase()];
@@ -111,13 +116,14 @@ async function translateWithDeepL(text, sl, tl) {
     if (!resp.ok) { console.log('[DeepL] HTTP', resp.status); return null; }
     const data = await resp.json();
     const out = data.translations && data.translations[0] && data.translations[0].text;
-    return out && out.trim() ? out : null;
+    return out && out.trim() ? out.trim() : null;
   } catch (e) {
     console.log('[DeepL] Note:', e.message);
     return null;
   }
 }
 
+// System 2: Official Google Cloud Translation API v2
 async function translateWithGoogleCloud(text, sl, tl) {
   if (!GOOGLE_TRANSLATE_KEY) return null;
   const body = { q: text.trim(), target: tl, format: 'text' };
@@ -132,11 +138,80 @@ async function translateWithGoogleCloud(text, sl, tl) {
     if (!resp.ok) { console.log('[Google Translate] HTTP', resp.status); return null; }
     const data = await resp.json();
     const out = data.data && data.data.translations && data.data.translations[0] && data.data.translations[0].translatedText;
-    return out && out.trim() ? out : null;
+    return out && out.trim() ? out.trim() : null;
   } catch (e) {
     console.log('[Google Translate] Note:', e.message);
     return null;
   }
+}
+
+// System 3: Open-Source Multi-Provider Failover (LibreTranslate -> Lingva Open-Source Mirrors -> MyMemory)
+async function translateWithOpenSource(text, sl, tl) {
+  const cleanText = text.trim();
+  const normSl = sl === 'zh-CN' ? 'zh' : (sl || 'auto');
+  const normTl = tl === 'zh-CN' ? 'zh' : tl;
+
+  // 3a. LibreTranslate (Self-hosted or configured public instance)
+  const libreHosts = LIBRETRANSLATE_URL
+    ? [LIBRETRANSLATE_URL.replace(/\/+$/, '')]
+    : ['https://translate.terraprint.co', 'https://lt.vern.cc'];
+  for (const host of libreHosts) {
+    try {
+      const payload = { q: cleanText, source: normSl === 'auto' ? 'auto' : normSl, target: normTl, format: 'text' };
+      if (LIBRETRANSLATE_KEY) payload.api_key = LIBRETRANSLATE_KEY;
+      const resp = await fetch(`${host}/translate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(2500)
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.translatedText && data.translatedText.trim() && data.translatedText.trim().toLowerCase() !== cleanText.toLowerCase()) {
+          return data.translatedText.trim();
+        }
+      }
+    } catch (ignored) {}
+  }
+
+  // 3b. Lingva Open-Source Mirrors (AGPLv3 open-source translation gateway)
+  const lingvaHosts = [
+    'https://lingva.ml',
+    'https://translate.plausibility.cloud',
+    'https://lingva.lunar.icu'
+  ];
+  for (const host of lingvaHosts) {
+    try {
+      const lingvaSl = normSl === 'auto' ? 'auto' : normSl;
+      const url = `${host}/api/v1/${encodeURIComponent(lingvaSl)}/${encodeURIComponent(normTl)}/${encodeURIComponent(cleanText)}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(2800) });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data && data.translation && data.translation.trim()) {
+          return data.translation.trim();
+        }
+      }
+    } catch (ignored) {}
+  }
+
+  // 3c. MyMemory Translated.net Public Translation Memory
+  try {
+    const query = encodeURIComponent(cleanText);
+    const pairSl = sl === 'auto' ? 'en' : sl;
+    const myMemUrl = `https://api.mymemory.translated.net/get?q=${query}&langpair=${pairSl}|${tl}&de=qinterapp@gmail.com`;
+    const resp = await fetch(myMemUrl, { signal: AbortSignal.timeout(3000) });
+    if (resp.ok) {
+      const parsed = await resp.json();
+      if (parsed.responseData && parsed.responseData.translatedText) {
+        const result = parsed.responseData.translatedText.trim();
+        if (result && !result.includes('MYMEMORY WARNING') && !result.includes('[ترجمة')) {
+          return result;
+        }
+      }
+    }
+  } catch (ignored) {}
+
+  return null;
 }
 
 // Multi-Engine Robust Translation Service (Native Async, 100% Crash-Proof)
@@ -151,36 +226,26 @@ async function fetchTranslation(text, fromLang, toLang) {
     return translationCache.get(cacheKey);
   }
 
-  // Engine 1: DeepL official API (best quality; key kept server-side only)
+  // System 1: DeepL official API (best quality; key kept server-side only)
   const deeplResult = await translateWithDeepL(text, sl, tl);
   if (deeplResult) {
     translationCache.set(cacheKey, deeplResult);
     return deeplResult;
   }
 
-  // Engine 2: Google Cloud Translation official API (v2, key kept server-side only)
+  // System 2: Google Cloud Translation official API (v2, key kept server-side only)
   const googleResult = await translateWithGoogleCloud(text, sl, tl);
   if (googleResult) {
     translationCache.set(cacheKey, googleResult);
     return googleResult;
   }
 
-  // Engine 3: MyMemory (free public fallback)
-  try {
-    const query = encodeURIComponent(text.trim());
-    const myMemUrl = `https://api.mymemory.translated.net/get?q=${query}&langpair=${sl}|${tl}&de=qinterapp@gmail.com`;
-    const resp = await fetch(myMemUrl, { signal: AbortSignal.timeout(3000) });
-    if (resp.ok) {
-      const parsed = await resp.json();
-      if (parsed.responseData && parsed.responseData.translatedText) {
-        let result = parsed.responseData.translatedText;
-        if (!result.includes('MYMEMORY WARNING') && !result.includes('[ترجمة')) {
-          translationCache.set(cacheKey, result);
-          return result;
-        }
-      }
-    }
-  } catch (ignored) {}
+  // System 3: Open-Source Multi-Provider (LibreTranslate -> Lingva -> MyMemory)
+  const openSourceResult = await translateWithOpenSource(text, sl, tl);
+  if (openSourceResult) {
+    translationCache.set(cacheKey, openSourceResult);
+    return openSourceResult;
+  }
 
   return text;
 }
@@ -414,10 +479,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Neural Audio TTS Stream API (Reliable audio speech for any language, 100% Apple iOS / Safari compatible)
+  // Neural Audio TTS Stream API (VoiceStudio AI Voices, Male Default + 4 Presets, 100% Apple iOS / Safari compatible)
   if (pathname === '/api/tts') {
     const text = (parsedUrl.searchParams.get('text') || '').trim();
     const lang = normalizeLangCode(parsedUrl.searchParams.get('lang') || 'en');
+    const voice = (parsedUrl.searchParams.get('voice') || 'male_natural').trim();
+    const rate = (parsedUrl.searchParams.get('rate') || '1.0').trim();
 
     if (!text) {
       if (!res.headersSent) {
@@ -427,7 +494,7 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    getTtsAudioBuffer(text, lang)
+    getTtsAudioBuffer(text, lang, voice, rate)
       .then(buffer => {
         if (res.headersSent) return;
         const total = buffer.length;

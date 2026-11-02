@@ -1752,7 +1752,7 @@ async function processAudioQueue() {
     processAudioQueue();
   };
 
-  const ttsUrl = `/api/tts?text=${encodeURIComponent(item.text)}&lang=${encodeURIComponent(item.langCode)}`;
+  const ttsUrl = `/api/tts?text=${encodeURIComponent(item.text)}&lang=${encodeURIComponent(item.langCode)}&voice=${encodeURIComponent(webVoicePreset || 'male_natural')}&rate=${encodeURIComponent(webSpeechRate || 1.0)}`;
 
   // Engine 1: Web Audio API (in-memory decodeAudioData, 100% Apple iOS / Safari compatible)
   try {
@@ -2327,9 +2327,9 @@ function playNaturalVoice(text, lang, onFinishCallback) {
     currentConvTtsAudio = null;
   }
 
-  // Tier 1: High-fidelity natural neural TTS stream from server
+  // Tier 1: High-fidelity natural neural TTS stream from server (VoiceStudio AI Voice)
   try {
-    const ttsUrl = `/api/tts?text=${encodeURIComponent(text.slice(0, 300))}&lang=${encodeURIComponent(lang)}`;
+    const ttsUrl = `/api/tts?text=${encodeURIComponent(text.slice(0, 300))}&lang=${encodeURIComponent(lang)}&voice=${encodeURIComponent(webVoicePreset || 'male_natural')}&rate=${encodeURIComponent(webSpeechRate || 1.0)}`;
     const audio = new Audio(ttsUrl);
     currentConvTtsAudio = audio;
     audio.playsInline = true;
@@ -2756,6 +2756,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (langEl) {
     langEl.value = localStorage.getItem('qinter_pref_target_lang') || 'en';
   }
+  setWebVoicePreset(localStorage.getItem('qinter_pref_voice_preset') || 'male_natural');
   setWebSpeechRate(parseFloat(localStorage.getItem('qinter_pref_speech_rate') || '1.0'));
   const autoBtn = document.getElementById('web-auto-speech-btn');
   if (autoBtn) {
@@ -2768,6 +2769,36 @@ window.addEventListener('DOMContentLoaded', () => {
 function saveWebTranslationPrefs() {
   const el = document.getElementById('web-pref-target-lang');
   if (el) localStorage.setItem('qinter_pref_target_lang', el.value);
+}
+
+let webVoicePreset = localStorage.getItem('qinter_pref_voice_preset') || 'male_natural';
+function setWebVoicePreset(preset) {
+  webVoicePreset = preset || 'male_natural';
+  localStorage.setItem('qinter_pref_voice_preset', webVoicePreset);
+  ['male_natural', 'male_deep', 'female_natural', 'female_warm'].forEach(id => {
+    const btn = document.getElementById('voice-btn-' + id);
+    if (btn) btn.classList.remove('selected');
+  });
+  const activeBtn = document.getElementById('voice-btn-' + webVoicePreset);
+  if (activeBtn) activeBtn.classList.add('selected');
+}
+
+function previewWebVoice() {
+  const lang = document.getElementById('web-pref-target-lang')?.value || 'en';
+  const samples = {
+    en: 'Hello, this is your selected VoiceStudio AI interpreter voice.',
+    fr: 'Bonjour, voici votre voix IA sélectionnée pour la traduction en direct.',
+    ar: 'مرحباً، هذا هو صوت الذكاء الاصطناعي المختار للترجمة الفورية.',
+    es: 'Hola, esta es tu voz de inteligencia artificial seleccionada para la traducción.',
+    de: 'Hallo, dies ist Ihre ausgewählte KI-Stimme für die Live-Übersetzung.',
+    it: 'Ciao, questa è la voce IA selezionata per la traduzione dal vivo.',
+    pt: 'Olá, esta é a sua voz de IA selecionada para tradução ao vivo.',
+    ru: 'Здравствуйте, это выбранный вами голос ИИ для живого перевода.',
+    zh: '您好，这是您选择的实时翻译人工智能语音。',
+    ja: 'こんにちは、これは選択されたAIリアルタイム翻訳音声です。'
+  };
+  const phrase = samples[lang] || samples.en;
+  speakTranslatedText(phrase, lang);
 }
 
 let webSpeechRate = 1.0;
@@ -2795,6 +2826,7 @@ function toggleWebAutoSpeech() {
 
 function clearWebCache() {
   localStorage.removeItem('qinter_pref_target_lang');
+  localStorage.removeItem('qinter_pref_voice_preset');
   localStorage.removeItem('qinter_pref_speech_rate');
   localStorage.removeItem('qinter_pref_auto_speech');
   alert('Local cache cleared.');

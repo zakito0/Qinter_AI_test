@@ -50,6 +50,7 @@ if ENV_FILE.exists():
 
 sys.path.insert(0, str(Path(__file__).parent))
 import auth_service  # account system (email/password + Google sign-in)
+import voicestudio_tts  # VoiceStudio AI Voice Synthesis (Male default + 4 presets)
 
 try:
     from langgraph.graph import StateGraph, START, END
@@ -984,6 +985,35 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/api/auth/me":
             status, payload = auth_service.me(self.headers)
             self._send_json(status, payload)
+            return
+        if self.path.startswith("/api/tts"):
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            text = (qs.get("text", [""])[0] or "").strip()
+            lang = (qs.get("lang", ["en"])[0] or "en").strip()
+            voice = (qs.get("voice", ["male_natural"])[0] or "male_natural").strip()
+            rate_raw = (qs.get("rate", ["1.0"])[0] or "1.0").strip()
+            try:
+                rate = float(rate_raw)
+            except Exception:
+                rate = 1.0
+            if not text:
+                self._send_json(400, {"error": "Missing text"})
+                return
+            audio_bytes = voicestudio_tts.synthesize_speech(text=text, lang=lang, voice_preset=voice, rate=rate)
+            if audio_bytes:
+                try:
+                    self.send_response(200)
+                    self._set_cors_headers()
+                    self.send_header("Content-Type", "audio/mpeg")
+                    self.send_header("Content-Length", str(len(audio_bytes)))
+                    self.send_header("Cache-Control", "public, max-age=86400")
+                    self.end_headers()
+                    self.wfile.write(audio_bytes)
+                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                    pass
+            else:
+                self._send_json(502, {"error": "VoiceStudio TTS synthesis unavailable"})
             return
         if self.path in ["/health", "/", "/api/agent/stats"]:
             self.send_response(200)
