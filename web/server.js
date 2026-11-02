@@ -81,6 +81,64 @@ function normalizeLangCode(code) {
   return c;
 }
 
+// ---- Official translation providers (keys come from environment variables) ----
+const DEEPL_KEY = (process.env.DEEPL_API_KEY || '').trim();
+const GOOGLE_TRANSLATE_KEY = (process.env.GOOGLE_TRANSLATE_API_KEY || '').trim();
+const DEEPL_TARGETS = {
+  en: 'EN-US', ar: 'AR', fr: 'FR', es: 'ES', de: 'DE', it: 'IT', pt: 'PT-PT', ru: 'RU',
+  'zh-cn': 'ZH-HANS', ja: 'JA', ko: 'KO', tr: 'TR', nl: 'NL', pl: 'PL', sv: 'SV', id: 'ID', he: 'HE'
+};
+const DEEPL_SOURCES = {
+  en: 'EN', ar: 'AR', fr: 'FR', es: 'ES', de: 'DE', it: 'IT', pt: 'PT', ru: 'RU',
+  'zh-cn': 'ZH', ja: 'JA', ko: 'KO', tr: 'TR', nl: 'NL', pl: 'PL', sv: 'SV', id: 'ID', he: 'HE'
+};
+
+async function translateWithDeepL(text, sl, tl) {
+  if (!DEEPL_KEY) return null;
+  const target = DEEPL_TARGETS[tl.toLowerCase()];
+  if (!target) return null; // not supported by DeepL (e.g. hi, fa, ur) -> next engine
+  const body = { text: [text.trim()], target_lang: target };
+  const source = DEEPL_SOURCES[sl.toLowerCase()];
+  if (source) body.source_lang = source;
+  try {
+    const host = DEEPL_KEY.endsWith(':fx') ? 'api-free.deepl.com' : 'api.deepl.com';
+    const resp = await fetch(`https://${host}/v2/translate`, {
+      method: 'POST',
+      headers: { 'Authorization': `DeepL-Auth-Key ${DEEPL_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(4000)
+    });
+    if (!resp.ok) { console.log('[DeepL] HTTP', resp.status); return null; }
+    const data = await resp.json();
+    const out = data.translations && data.translations[0] && data.translations[0].text;
+    return out && out.trim() ? out : null;
+  } catch (e) {
+    console.log('[DeepL] Note:', e.message);
+    return null;
+  }
+}
+
+async function translateWithGoogleCloud(text, sl, tl) {
+  if (!GOOGLE_TRANSLATE_KEY) return null;
+  const body = { q: text.trim(), target: tl, format: 'text' };
+  if (sl && sl !== 'auto') body.source = sl;
+  try {
+    const resp = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(GOOGLE_TRANSLATE_KEY)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(4000)
+    });
+    if (!resp.ok) { console.log('[Google Translate] HTTP', resp.status); return null; }
+    const data = await resp.json();
+    const out = data.data && data.data.translations && data.data.translations[0] && data.data.translations[0].translatedText;
+    return out && out.trim() ? out : null;
+  } catch (e) {
+    console.log('[Google Translate] Note:', e.message);
+    return null;
+  }
+}
+
 // Multi-Engine Robust Translation Service (Native Async, 100% Crash-Proof)
 async function fetchTranslation(text, fromLang, toLang) {
   if (!text || text.trim() === '') return text;
@@ -93,50 +151,21 @@ async function fetchTranslation(text, fromLang, toLang) {
     return translationCache.get(cacheKey);
   }
 
-  // Engine 1: Google Dict-Chrome Gateway (Ultra-fast 40-150ms, 100% reliable across all language pairs)
-  try {
-    const query = encodeURIComponent(text.trim());
-    const googleUrl = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${sl}&tl=${tl}&q=${query}`;
-    const resp = await fetch(googleUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      signal: AbortSignal.timeout(2500)
-    });
-    if (resp.ok) {
-      const parsed = await resp.json();
-      let result = '';
-      if (Array.isArray(parsed)) {
-        result = parsed.join(' ');
-      } else if (typeof parsed === 'string') {
-        result = parsed;
-      }
-      if (result && result.trim() !== '') {
-        translationCache.set(cacheKey, result);
-        return result;
-      }
-    }
-  } catch (ignored) {}
+  // Engine 1: DeepL official API (best quality; key kept server-side only)
+  const deeplResult = await translateWithDeepL(text, sl, tl);
+  if (deeplResult) {
+    translationCache.set(cacheKey, deeplResult);
+    return deeplResult;
+  }
 
-  // Engine 2: Google GTX Single Endpoint Fallback
-  try {
-    const query = encodeURIComponent(text.trim());
-    const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${query}`;
-    const resp = await fetch(gtxUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      signal: AbortSignal.timeout(2500)
-    });
-    if (resp.ok) {
-      const parsed = await resp.json();
-      if (Array.isArray(parsed) && Array.isArray(parsed[0])) {
-        const result = parsed[0].map(s => s[0]).filter(Boolean).join('');
-        if (result && result.trim() !== '') {
-          translationCache.set(cacheKey, result);
-          return result;
-        }
-      }
-    }
-  } catch (ignored) {}
+  // Engine 2: Google Cloud Translation official API (v2, key kept server-side only)
+  const googleResult = await translateWithGoogleCloud(text, sl, tl);
+  if (googleResult) {
+    translationCache.set(cacheKey, googleResult);
+    return googleResult;
+  }
 
-  // Engine 2 Fallback: MyMemory API
+  // Engine 3: MyMemory (free public fallback)
   try {
     const query = encodeURIComponent(text.trim());
     const myMemUrl = `https://api.mymemory.translated.net/get?q=${query}&langpair=${sl}|${tl}&de=qinterapp@gmail.com`;
