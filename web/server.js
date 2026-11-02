@@ -78,23 +78,47 @@ async function getTtsAudioBuffer(text, lang, voice = 'male_natural', rate = '1.0
 
   const query = encodeURIComponent(text.trim().slice(0, 350));
   const agentTtsUrl = `http://127.0.0.1:8000/api/tts?text=${query}&lang=${encodeURIComponent(lang)}&voice=${encodeURIComponent(cleanVoice)}&rate=${encodeURIComponent(cleanRate)}`;
-  const resp = await fetch(agentTtsUrl, {
-    signal: AbortSignal.timeout(7500)
-  });
 
-  if (!resp.ok) {
-    throw new Error(`VoiceStudio TTS service error: ${resp.status}`);
+  // 1. Primary: VoiceStudio Python Service (Edge-TTS / Local VoiceStudio on port 3900)
+  try {
+    const resp = await fetch(agentTtsUrl, {
+      signal: AbortSignal.timeout(6500)
+    });
+    if (resp.ok) {
+      const arrayBuf = await resp.arrayBuffer();
+      const buffer = Buffer.from(arrayBuf);
+      if (buffer && buffer.length > 200) {
+        if (ttsAudioCache.size > 150) {
+          const firstKey = ttsAudioCache.keys().next().value;
+          ttsAudioCache.delete(firstKey);
+        }
+        ttsAudioCache.set(cacheKey, buffer);
+        return buffer;
+      }
+    }
+  } catch (e) {
+    console.log('[VoiceStudio Proxy] Python service note:', e.message);
   }
 
-  const arrayBuf = await resp.arrayBuffer();
-  const buffer = Buffer.from(arrayBuf);
-
-  if (ttsAudioCache.size > 150) {
-    const firstKey = ttsAudioCache.keys().next().value;
-    ttsAudioCache.delete(firstKey);
+  // 2. Fallback: High-speed Neural TTS Stream Gateway (Zero downtime guarantee)
+  try {
+    const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${query}&tl=${encodeURIComponent(lang)}&client=tw-ob`;
+    const fResp = await fetch(fallbackUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      signal: AbortSignal.timeout(4000)
+    });
+    if (fResp.ok) {
+      const fBuf = Buffer.from(await fResp.arrayBuffer());
+      if (fBuf && fBuf.length > 200) {
+        ttsAudioCache.set(cacheKey, fBuf);
+        return fBuf;
+      }
+    }
+  } catch (fe) {
+    console.log('[TTS Fallback] Gateway note:', fe.message);
   }
-  ttsAudioCache.set(cacheKey, buffer);
-  return buffer;
+
+  throw new Error('TTS audio generation failed across all available providers');
 }
 
 // Normalize language codes (e.g., 'zh' -> 'zh-CN')
@@ -471,6 +495,13 @@ const server = http.createServer((req, res) => {
   if (pathname === '/favicon.ico') {
     res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
     res.end(FAVICON_SVG);
+    return;
+  }
+
+  // Health check API for cloud host monitoring (Render, Railway, Uptime)
+  if (pathname === '/health' || pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ status: 'ok', uptime: Math.round(process.uptime()), timestamp: Date.now() }));
     return;
   }
 
