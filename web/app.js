@@ -332,6 +332,11 @@ function openDownloadAppModal(feature = 'general') {
     if (titleEl) titleEl.textContent = 'Document Translation (DocTrad)';
     if (subtitleEl) subtitleEl.textContent = 'Exclusive to Qinter for Android';
     if (msgEl) msgEl.textContent = 'Full document and PDF translation, dual-column bilingual reader, and offline neural translation are exclusive to the full Qinter Mobile App.';
+  } else if (feature === 'host') {
+    if (iconEl) iconEl.textContent = '🎙️';
+    if (titleEl) titleEl.textContent = 'Speech Host Broadcasting';
+    if (subtitleEl) subtitleEl.textContent = 'Exclusive to Qinter for Android';
+    if (msgEl) msgEl.textContent = 'Hosting live translation rooms, acoustic microphone beamforming, and room broadcasting are powered by on-device AI in the full Qinter Mobile App. Web edition is dedicated for participants to join, listen, and view translations in real time.';
   } else if (feature === 'account') {
     if (iconEl) iconEl.textContent = '👤';
     if (titleEl) titleEl.textContent = 'Cloud Accounts & Sync';
@@ -544,8 +549,12 @@ function getJoinUrl(roomCode) {
   return `${window.location.origin}/?room=${encodeURIComponent(code)}`;
 }
 
-// Host actions (Browser Lite Speech Room - Exact Mobile HostScreen Replica)
+// Host actions - Blocked on web version (Exclusive to Android Mobile App)
 function startHostAction() {
+  openDownloadAppModal('host');
+}
+
+function startHostActionInternal() {
   currentRole = 'HOST';
   currentRoomCode = generateRoomCode();
 
